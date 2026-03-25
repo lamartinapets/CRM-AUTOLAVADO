@@ -26,19 +26,20 @@ if not check_password():
 @st.cache_data(ttl=600)
 def load_data():
     try:
-        # URL desde Secrets
+        # Obtenemos la URL de tus Secrets
         sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         
-        # Limpieza robusta de la URL para exportar CSV
-        if "/edit" in sheet_url:
-            base_url = sheet_url.split("/edit")
-            csv_url = base_url + "/export?format=csv"
+        # Esta es la forma más segura de convertir el link para leerlo
+        if "docs.google.com" in sheet_url:
+            # Quitamos todo lo que haya después de la ID del excel y pedimos el CSV
+            id_excel = sheet_url.split("/d/").split("/")
+            csv_url = f"https://docs.google.com/spreadsheets/d/{id_excel}/export?format=csv"
         else:
             csv_url = sheet_url
             
         return pd.read_csv(csv_url)
     except Exception as e:
-        st.error(f"Error al conectar con los datos: {e}")
+        st.error(f"Error técnico: {e}")
         return None
 
 # --- CUERPO DE LA APP ---
@@ -48,13 +49,12 @@ st.write("Bienvenido al sistema de gestión.")
 df = load_data()
 
 if df is not None:
-    st.success("✅ Datos cargados con éxito")
+    st.success("✅ ¡Base de datos cargada!")
     
-    # Buscador de clientes
-    busqueda = st.text_input("🔍 Buscar cliente (Nombre, Mascota o Teléfono)")
+    # Buscador simple
+    busqueda = st.text_input("🔍 Buscar cliente o mascota")
     
     if busqueda:
-        # Filtro general en toda la tabla
         mask = df.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)
         df_mostrar = df[mask]
     else:
@@ -62,4 +62,4 @@ if df is not None:
         
     st.dataframe(df_mostrar, use_container_width=True)
 else:
-    st.warning("⚠️ No se pudieron visualizar los datos. Revisa los permisos del Excel.")
+    st.warning("⚠️ No se pudo cargar la información. Verifica los permisos del Excel.")
