@@ -26,20 +26,27 @@ if not check_password():
 @st.cache_data(ttl=600)
 def load_data():
     try:
-        # Forzamos la URL a ser un texto (string) para evitar el error de 'list'
+        # 1. Extraemos el secreto de forma segura
         raw_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        sheet_url = str(raw_url) if isinstance(raw_url, list) else str(raw_url)
         
-        # Convertimos el link para descarga directa de datos
-        if "docs.google.com" in sheet_url:
-            id_excel = sheet_url.split("/d/").split("/")
-            csv_url = f"https://docs.google.com/spreadsheets/d/{id_excel}/export?format=csv"
+        # 2. Si Streamlit lo lee como lista, tomamos el primer elemento; si no, el texto directo
+        if isinstance(raw_url, list):
+            sheet_url = str(raw_url)
+        else:
+            sheet_url = str(raw_url)
+        
+        # 3. Limpiamos la URL para obtener solo la parte necesaria para descargar el CSV
+        # Buscamos la ID del documento (lo que está entre /d/ y /edit)
+        if "/d/" in sheet_url:
+            parts = sheet_url.split("/d/")
+            doc_id = parts.split("/")
+            csv_url = f"https://docs.google.com/spreadsheets/d/{doc_id}/export?format=csv"
         else:
             csv_url = sheet_url
             
         return pd.read_csv(csv_url)
     except Exception as e:
-        st.error(f"Error en formato de datos: {e}")
+        st.error(f"Error en la conexión: {e}")
         return None
 
 # --- CUERPO DE LA APP ---
@@ -49,9 +56,9 @@ st.write("Bienvenido al sistema de gestión.")
 df = load_data()
 
 if df is not None:
-    st.success("✅ ¡Base de datos cargada!")
+    st.success("✅ ¡Datos cargados correctamente!")
     
-    # Buscador
+    # Buscador de clientes
     busqueda = st.text_input("🔍 Buscar cliente o mascota")
     
     if busqueda:
@@ -62,4 +69,6 @@ if df is not None:
         
     st.dataframe(df_mostrar, use_container_width=True)
 else:
-    st.warning("⚠️ No se pudo cargar la información. Revisa los permisos del Excel.")
+    st.warning("⚠️ No se pudo visualizar la información. Verifica los permisos del Excel.")
+
+# Actualización vFinal
