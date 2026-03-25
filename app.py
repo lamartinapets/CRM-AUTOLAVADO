@@ -26,12 +26,12 @@ if not check_password():
 @st.cache_data(ttl=600)
 def load_data():
     try:
-        # Obtenemos la URL de tus Secrets
-        sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+        # Forzamos la URL a ser un texto (string) para evitar el error de 'list'
+        raw_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+        sheet_url = str(raw_url) if isinstance(raw_url, list) else str(raw_url)
         
-        # Esta es la forma más segura de convertir el link para leerlo
+        # Convertimos el link para descarga directa de datos
         if "docs.google.com" in sheet_url:
-            # Quitamos todo lo que haya después de la ID del excel y pedimos el CSV
             id_excel = sheet_url.split("/d/").split("/")
             csv_url = f"https://docs.google.com/spreadsheets/d/{id_excel}/export?format=csv"
         else:
@@ -39,7 +39,7 @@ def load_data():
             
         return pd.read_csv(csv_url)
     except Exception as e:
-        st.error(f"Error técnico: {e}")
+        st.error(f"Error en formato de datos: {e}")
         return None
 
 # --- CUERPO DE LA APP ---
@@ -51,7 +51,7 @@ df = load_data()
 if df is not None:
     st.success("✅ ¡Base de datos cargada!")
     
-    # Buscador simple
+    # Buscador
     busqueda = st.text_input("🔍 Buscar cliente o mascota")
     
     if busqueda:
@@ -62,4 +62,4 @@ if df is not None:
         
     st.dataframe(df_mostrar, use_container_width=True)
 else:
-    st.warning("⚠️ No se pudo cargar la información. Verifica los permisos del Excel.")
+    st.warning("⚠️ No se pudo cargar la información. Revisa los permisos del Excel.")
