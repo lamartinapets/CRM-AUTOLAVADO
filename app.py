@@ -1,68 +1,55 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="CRM La Martina Pets", layout="wide", page_icon="🐾")
 
-# --- LOGIN ---
-if "authenticated" not in st.session_state:
+# --- LOGIN (SEGURIDAD DE LA APP) ---
+if "auth" not in st.session_state:
     st.title("🔐 Acceso Administrativo")
-    password = st.text_input("Contraseña del sistema", type="password")
-    if st.button("Ingresar"):
-        if password == st.secrets["password"]:
-            st.session_state["authenticated"] = True
+    pw = st.text_input("Ingrese la contraseña de seguridad", type="password")
+    if st.button("Entrar"):
+        if pw == st.secrets["password"]:
+            st.session_state["auth"] = True
             st.rerun()
         else:
             st.error("Contraseña incorrecta")
     st.stop()
 
-# --- CARGA DE DATOS ROBUSTA ---
-@st.cache_data(ttl=300)
-def get_google_sheet_data():
-    try:
-        # Recuperamos el secreto sin importar su tipo
-        raw_input = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        
-        # Lógica Senior: Normalizar entrada (si es lista, tomar el primer elemento)
-        if isinstance(raw_input, list):
-            url_text = str(raw_input)
-        else:
-            url_text = str(raw_input)
-            
-        # Limpieza extrema de caracteres invisibles y espacios
-        url_cleaned = url_text.strip().replace('"', '').replace("'", "")
-        
-        # Extraer ID del documento usando expresiones regulares (más seguro que .split)
-        match = re.search(r"/d/([a-zA-Z0-9-_]+)", url_cleaned)
-        if match:
-            doc_id = match.group(1)
-            final_csv_url = f"https://docs.google.com/spreadsheets/d/{doc_id}/export?format=csv"
-        else:
-            # Si no hay ID, intentamos usar la URL tal cual
-            final_csv_url = url_cleaned
-            
-        return pd.read_csv(final_csv_url)
-    except Exception as e:
-        st.error(f"Error crítico de conexión: {str(e)}")
-        return None
+# --- PANEL DE CONTROL ---
+st.title("🐾 CRM Privado - La Martina Pets")
 
-# --- INTERFAZ PRINCIPAL ---
-st.title("🐾 CRM La Martina Pets")
-st.markdown("---")
-
-data = get_google_sheet_data()
-
-if data is not None:
-    # Buscador Senior
-    search_term = st.text_input("🔍 Buscador inteligente (Nombre, Mascota, Teléfono...)", placeholder="Escribe aquí para filtrar...")
+try:
+    # Creamos la conexión segura usando los Secrets de [connections.gsheets]
+    conn = st.connection("gsheets", type=GSheetsConnection)
     
-    if search_term:
-        # Filtro de texto completo en el dataframe
-        filtered_df = data[data.apply(lambda row: row.astype(str).str.contains(search_term, case=False).any(), axis=1)]
-        st.success(f"Se encontraron {len(filtered_df)} registros.")
-        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+    # Leemos la pestaña 'visitas' que vimos en tu Excel
+    # El parámetro 'ttl=0' asegura que siempre veas los datos más recientes
+    df = conn.read(
+        spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"],
+        worksheet="visitas",
+        ttl=0
+    )
+    
+    st.success("✅ Datos cargados con seguridad privada")
+
+    # --- BUSCADOR ---
+    busqueda = st.text_input("🔍 Buscar por mascota, cliente o teléfono...", placeholder="Escribe aquí...")
+    
+    if busqueda:
+        # Filtramos en todas las columnas sin importar mayúsculas
+        resultado = df[df.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
+        st.dataframe(resultado, use_container_width=True, hide_index=True)
+        st.info(f"Se encontraron {len(resultado)} registros.")
     else:
-        st.dataframe(data, use_container_width=True, hide_index=True)
-else:
-    st.warning("No se pudo cargar la base de datos. Verifique que el enlace en Secrets sea correcto y que el archivo de Google Sheets tenga activada la opción 'Cualquier persona con el enlace puede leer'.")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+except Exception as e:
+    st.error(f"⚠️ Error de acceso seguro: {str(e)}")
+    st.info("Asegúrate de que 'martina-bot@crm-martina-490822.iam.gserviceaccount.com' siga como EDITOR en tu Google Sheet.")
+
+# --- BOTÓN DE ACTUALIZACIÓN ---
+if st.button("🔄 Refrescar base de datos"):
+    st.cache_data.clear()
+    st.rerun()
