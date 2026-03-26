@@ -26,12 +26,10 @@ def load_data():
         df.columns = [c.strip() for c in df.columns]
         df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
         
-        # Limpieza de VALOR
         if 'valor' in df.columns:
             df['valor'] = df['valor'].astype(str).replace(r'[\$,\.]', '', regex=True)
             df['valor'] = pd.to_numeric(df['valor'], errors='coerce').fillna(0)
             
-        # Unificación de Canales
         if 'Canal' in df.columns:
             df['Canal'] = df['Canal'].str.strip().str.capitalize().replace({'Tiktok': 'TikTok'})
             
@@ -50,9 +48,10 @@ if df is not None:
     if menu == "📈 Dashboard de Salud":
         st.subheader("Estado de la Cartera de Clientes")
         
-        # Lógica de clasificación (30 días Activos)
+        # Lógica de clasificación
         hoy = datetime.now()
-        ultimo_contacto = df.groupby('mascota')['fecha'].max().reset_index()
+        # Obtenemos la última visita y los datos de contacto
+        ultimo_contacto = df.sort_values('fecha').groupby('mascota').tail(1).copy()
         
         def clasificar(fecha):
             if pd.isna(fecha): return "Sin datos"
@@ -63,38 +62,44 @@ if df is not None:
 
         ultimo_contacto['Estado'] = ultimo_contacto['fecha'].apply(clasificar)
         
-        # 1. KPIs Superiores
+        # 1. KPIs
         k1, k2, k3 = st.columns(3)
         k1.metric("Ingresos Totales", f"${df['valor'].sum():,.0f}")
-        k2.metric("Servicios (Visitas)", len(df))
-        k3.metric("Mascotas Reales", len(ultimo_contacto))
+        k2.metric("Servicios Totales", len(df))
+        k3.metric("Mascotas Únicas", len(ultimo_contacto))
 
         st.divider()
 
-        # 2. Gráfico de Barras de Salud
-        st.write("#### 📊 Distribución por Fidelidad (Días desde última visita)")
+        # 2. Gráfico de Barras
+        st.write("#### 📊 Distribución de Clientes")
         orden = ["Activo (Fiel)", "Medio (Riesgo)", "Perdido (Inactivo)"]
         stats_salud = ultimo_contacto['Estado'].value_counts().reindex(orden).fillna(0)
         st.bar_chart(stats_salud)
 
         st.divider()
 
-        # 3. Gráfico de Canales
-        st.write("#### 📢 Clientes por Canal de Captación")
-        if 'Canal' in df.columns:
-            st.bar_chart(df['Canal'].value_counts())
-
-        st.divider()
+        # 3. TABLAS DETALLADAS (Lo que solicitaste)
+        st.write("### 📝 Listado Detallado por Categoría")
         
-        # 4. Tabla de Clientes para recuperar
-        st.write("### 🚨 Clientes Perdidos (Más de 60 días sin venir)")
-        perdidos = ultimo_contacto[ultimo_contacto['Estado'] == "Perdido (Inactivo)"]
-        # Cruzamos datos para obtener el ID (teléfono)
-        info_p = pd.merge(perdidos, df[['mascota', 'cliente', 'id']], on='mascota', how='left').drop_duplicates('mascota')
-        st.dataframe(info_p[['mascota', 'cliente', 'id', 'fecha']], use_container_width=True)
+        tab_activos, tab_medios, tab_perdidos = st.tabs(["✅ Activos", "⚠️ Medios", "🚨 Perdidos"])
+        
+        with tab_activos:
+            st.success("Clientes que han venido en los últimos 30 días")
+            activos = ultimo_contacto[ultimo_contacto['Estado'] == "Activo (Fiel)"]
+            st.dataframe(activos[['mascota', 'cliente', 'id', 'fecha', 'Canal']], use_container_width=True)
+            
+        with tab_medios:
+            st.warning("Clientes que no vienen hace más de 30 días (Riesgo de abandono)")
+            medios = ultimo_contacto[ultimo_contacto['Estado'] == "Medio (Riesgo)"]
+            st.dataframe(medios[['mascota', 'cliente', 'id', 'fecha', 'Canal']], use_container_width=True)
+            
+        with tab_perdidos:
+            st.error("Clientes que no vienen hace más de 60 días (Recuperación necesaria)")
+            perdidos = ultimo_contacto[ultimo_contacto['Estado'] == "Perdido (Inactivo)"]
+            st.dataframe(perdidos[['mascota', 'cliente', 'id', 'fecha', 'Canal']], use_container_width=True)
 
     elif menu == "🔍 Buscador e Historial":
-        st.subheader("Historial de Visitas")
+        st.subheader("Buscador de Historial")
         busqueda = st.text_input("Nombre de mascota o cliente")
         if busqueda:
             res = df[df.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
@@ -105,8 +110,8 @@ if df is not None:
     elif menu == "📅 Citas de Hoy":
         hoy_f = datetime.now().date()
         df_hoy = df[df['fecha'].dt.date == hoy_f]
-        st.write(f"Citas del día: {hoy_f.strftime('%d/%m/%Y')}")
+        st.write(f"Agenda para hoy: {hoy_f.strftime('%d/%m/%Y')}")
         if not df_hoy.empty:
             st.dataframe(df_hoy, use_container_width=True)
         else:
-            st.info("No hay servicios registrados para la fecha de hoy.")
+            st.info("No hay servicios registrados para hoy.")
