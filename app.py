@@ -7,72 +7,72 @@ st.set_page_config(page_title="CRM La Martina Pets", layout="wide", page_icon="�
 
 # --- LOGIN ---
 if "auth" not in st.session_state:
-    st.title("🔐 Acceso La Martina")
-    pw = st.text_input("Contraseña de seguridad", type="password")
-    if st.button("Ingresar"):
+    st.title("🔐 Acceso Administrativo")
+    pw = st.text_input("Ingrese la clave", type="password")
+    if st.button("Entrar"):
         if pw == st.secrets["password"]:
             st.session_state["auth"] = True
             st.rerun()
-        else:
-            st.error("❌ Clave incorrecta")
     st.stop()
 
-# --- CONEXIÓN DIRECTA ---
-# ID de tu Excel según tu link: 1rHtwtkyxsyY2mp32sCQ4VRiQ5pLOZpM4jiBs9vbYtmw
-URL_CSV = "https://docs.google.com/spreadsheets/d/1rHtwtkyxsyY2mp32sCQ4VRiQ5pLOZpM4jiBs9vbYtmw/export?format=csv&gid=0"
+# --- CONEXIÓN ---
+# ID de tu Excel según tus capturas
+SHEET_ID = "1rHtwtkyxsyY2mp32sCQ4VRiQ5pLOZpM4jiBs9vbYtmw"
+URL_CSV = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=5) # Actualización rápida para ver cambios
 def load_data():
     try:
         df = pd.read_csv(URL_CSV)
-        df.columns = [c.strip() for c in df.columns] # Limpiar espacios en nombres
+        df.columns = [c.strip() for c in df.columns]
         df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
-        if 'valor' in df.columns:
-            df['valor'] = df['valor'].astype(str).replace(r'[\$,]', '', regex=True).astype(float)
+        if 'Canal' in df.columns:
+            df['Canal'] = df['Canal'].str.title() # Corrige el error de "Tiktok/TikTok"
         return df
-    except Exception as e:
-        st.error(f"Error cargando datos: {e}")
+    except:
         return None
 
 df = load_data()
 
-# --- INTERFAZ ---
-if df is not None:
-    st.title("🐾 CRM La Martina Pets")
+# --- MENÚ PRINCIPAL ---
+st.title("🐾 CRM La Martina Pets")
+menu = st.sidebar.radio("Navegación", ["📅 Agendar y Citas", "🔍 Buscador e Historial", "📈 Reportes"])
+
+if menu == "📅 Agendar y Citas":
+    st.subheader("Gestión de Agenda")
     
-    menu = st.sidebar.selectbox("Menú", ["📊 Reportes", "🔍 Buscador", "📅 Citas de Hoy"])
+    # Pestaña para ver lo de hoy
+    hoy = datetime.now().date()
+    citas_hoy = df[df['fecha'].dt.date == hoy]
+    
+    st.write(f"### Citas para hoy: {hoy.strftime('%d/%m/%Y')}")
+    if not citas_hoy.empty:
+        st.dataframe(citas_hoy[['mascota', 'cliente', 'id', 'Canal']], use_container_width=True)
+    else:
+        st.info("No hay citas para hoy.")
 
-    if menu == "📊 Reportes":
-        st.subheader("Análisis de Ventas y Canales")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("Ventas Totales", f"${df['valor'].sum():,.0f}")
-        with c2:
-            st.metric("Total Mascotas", len(df))
-        
-        st.divider()
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.write("#### Canales que más traen clientes")
-            st.bar_chart(df['Canal'].value_counts())
-        with col_b:
-            st.write("#### Razas más frecuentes")
-            st.bar_chart(df['raza'].value_counts().head(5))
+    st.divider()
+    st.write("### 🆕 Para crear una nueva cita:")
+    st.info("Debido a los bloqueos de Google en tu cuenta, para agregar un nuevo cliente debes registrarlo en tu archivo de Excel. El CRM lo mostrará aquí automáticamente en 5 segundos.")
+    st.link_button("Abrir mi Excel para Agendar", f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit")
 
-    elif menu == "🔍 Buscador":
-        st.subheader("Buscador Rápido")
-        busqueda = st.text_input("Nombre de mascota, dueño o teléfono")
-        if busqueda:
-            res = df[df.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
-            st.dataframe(res, use_container_width=True)
+elif menu == "🔍 Buscador e Historial":
+    st.subheader("Historial de Visitas")
+    busqueda = st.text_input("Ingrese nombre de la mascota o dueño para ver su historial")
+    
+    if busqueda:
+        # Filtrar historial
+        historial = df[df.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
+        if not historial.empty:
+            st.write(f"Se encontraron {len(historial)} visitas:")
+            # Ordenar por fecha más reciente
+            st.dataframe(historial.sort_values('fecha', ascending=False), use_container_width=True)
         else:
-            st.dataframe(df, use_container_width=True)
+            st.warning("No se encontró historial para ese nombre.")
 
-    elif menu == "📅 Citas de Hoy":
-        st.subheader("Agenda del Día")
-        hoy = datetime.now().date()
-        df_hoy = df[df['fecha'].dt.date == hoy]
-        if not df_hoy.empty:
-            st.table(df_hoy[['mascota', 'cliente', 'Canal']])
-        else:
-            st.info("No hay citas programadas para hoy.")
+elif menu == "📈 Reportes":
+    st.subheader("Análisis de Negocio")
+    col1, col2 = st.columns(2)
+    col1.metric("Ventas Totales", f"${df['valor'].sum():,.0f}")
+    col2.metric("Total de Baños", len(df))
+    st.bar_chart(df['Canal'].value_counts())
