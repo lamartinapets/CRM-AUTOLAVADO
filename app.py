@@ -7,7 +7,7 @@ st.set_page_config(page_title="CRM La Martina Pets", layout="wide", page_icon="�
 
 # --- LOGIN ---
 if "auth" not in st.session_state:
-    st.title("🔐 Acceso La Martina")
+    st.title("🔐 Acceso Administrativo")
     pw = st.text_input("Contraseña", type="password")
     if st.button("Ingresar"):
         if pw == st.secrets["password"]:
@@ -15,103 +15,108 @@ if "auth" not in st.session_state:
             st.rerun()
     st.stop()
 
-# --- CARGA DE DATOS ---
+# --- CONEXIÓN ---
 SHEET_ID = "1rHtwtkyxsyY2mp32sCQ4VRiQ5pLOZpM4jiBs9vbYtmw"
-URL_CSV = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+URL_VISITAS = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0"
+URL_AGENDA = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=agenda"
 
 @st.cache_data(ttl=5)
 def load_data():
     try:
-        df = pd.read_csv(URL_CSV)
-        df.columns = [c.strip() for c in df.columns]
-        df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
+        # 1. Cargar Historial (Hoja Visitas)
+        df_v = pd.read_csv(URL_VISITAS)
+        df_v.columns = [c.strip() for c in df_v.columns]
+        df_v['fecha'] = pd.to_datetime(df_v['fecha'], dayfirst=True, errors='coerce')
+        if 'valor' in df_v.columns:
+            df_v['valor'] = pd.to_numeric(df_v['valor'].astype(str).replace(r'[\$,\.]', '', regex=True), errors='coerce').fillna(0)
         
-        if 'valor' in df.columns:
-            df['valor'] = df['valor'].astype(str).replace(r'[\$,\.]', '', regex=True)
-            df['valor'] = pd.to_numeric(df['valor'], errors='coerce').fillna(0)
+        # 2. Cargar Agenda
+        df_a = pd.read_csv(URL_AGENDA)
+        df_a.columns = [c.strip() for c in df_a.columns]
+        
+        # Flexibilidad en Fecha y Hora
+        df_a['fecha'] = pd.to_datetime(df_a['fecha'], dayfirst=True, errors='coerce')
+        if 'hora' in df_a.columns:
+            df_a['hora'] = df_a['hora'].fillna("--:--").astype(str)
+        
+        # Limpiar Abonos y Totales
+        for col in ['abono', 'valor total']:
+            if col in df_a.columns:
+                df_a[col] = pd.to_numeric(df_a[col].astype(str).replace(r'[\$,\.]', '', regex=True), errors='coerce').fillna(0)
+        
+        # Ordenar Agenda
+        if not df_a.empty:
+            df_a = df_a.sort_values(by=['fecha', 'hora'], ascending=[True, True])
             
-        if 'Canal' in df.columns:
-            df['Canal'] = df['Canal'].str.strip().str.capitalize().replace({'Tiktok': 'TikTok'})
-            
-        return df
-    except:
-        return None
+        return df_v, df_a
+    except Exception as e:
+        st.error(f"Error de lectura: {e}")
+        return None, None
 
-df = load_data()
+df_visitas, df_agenda = load_data()
 
 # --- INTERFAZ ---
-if df is not None:
+if df_visitas is not None:
     st.title("🐾 CRM La Martina Pets")
     
-    menu = st.sidebar.radio("Menú Principal", ["📈 Dashboard de Salud", "🔍 Buscador e Historial", "📅 Citas de Hoy"])
+    menu = st.sidebar.radio("Navegación", ["📅 Agenda y Abonos", "📈 Dashboard Salud", "🔍 Buscador Global"])
 
-    if menu == "📈 Dashboard de Salud":
-        st.subheader("Estado de la Cartera de Clientes")
+    if menu == "📅 Agenda y Abonos":
+        st.subheader("📅 Control de Citas y Saldos Pendientes")
         
-        # Lógica de clasificación
+        if df_agenda is not None and not df_agenda.empty:
+            agenda_calc = df_agenda.copy()
+            if 'valor total' in agenda_calc.columns and 'abono' in agenda_calc.columns:
+                agenda_calc['Saldo Pendiente'] = agenda_calc['valor total'] - agenda_calc['abono']
+            
+            # Mostrar Tabla con Estilo
+            cols_show = ['fecha', 'hora', 'mascota', 'cliente', 'servicio', 'valor total', 'abono', 'Saldo Pendiente']
+            actual = [c for c in cols_show if c in agenda_calc.columns]
+            
+            st.dataframe(agenda_calc[actual].style.format({
+                'valor total': '${:,.0f}', 'abono': '${:,.0f}', 'Saldo Pendiente': '${:,.0f}'
+            }).applymap(lambda x: 'background-color: #ffcccc' if isinstance(x, (int, float)) and x > 0 else '', subset=['Saldo Pendiente']), 
+            use_container_width=True)
+            
+            # Resumen de Cobro Diario
+            hoy_f = datetime.now().date()
+            saldo_hoy = agenda_calc[agenda_calc['fecha'].dt.date == hoy_f]['Saldo Pendiente'].sum()
+            st.metric("Total por cobrar hoy", f"${saldo_hoy:,.0f}")
+        else:
+            st.info("No hay datos en la pestaña 'agenda'.")
+        
+        st.divider()
+        st.link_button("📝 Abrir Excel", f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit")
+
+    elif menu == "📈 Dashboard Salud":
+        st.subheader("Estado de Clientes (Base: 30 días)")
         hoy = datetime.now()
-        # Obtenemos la última visita y los datos de contacto
-        ultimo_contacto = df.sort_values('fecha').groupby('mascota').tail(1).copy()
+        ultimo = df_visitas.sort_values('fecha').groupby('mascota').tail(1).copy()
         
         def clasificar(fecha):
             if pd.isna(fecha): return "Sin datos"
             dias = (hoy - fecha).days
-            if dias <= 30: return "Activo (Fiel)"
-            if dias <= 60: return "Medio (Riesgo)"
-            return "Perdido (Inactivo)"
+            if dias <= 30: return "Activo"
+            if dias <= 60: return "Medio"
+            return "Perdido"
 
-        ultimo_contacto['Estado'] = ultimo_contacto['fecha'].apply(clasificar)
+        ultimo['Estado'] = ultimo['fecha'].apply(clasificar)
         
-        # 1. KPIs
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Ingresos Totales", f"${df['valor'].sum():,.0f}")
-        k2.metric("Servicios Totales", len(df))
-        k3.metric("Mascotas Únicas", len(ultimo_contacto))
-
-        st.divider()
-
-        # 2. Gráfico de Barras
-        st.write("#### 📊 Distribución de Clientes")
-        orden = ["Activo (Fiel)", "Medio (Riesgo)", "Perdido (Inactivo)"]
-        stats_salud = ultimo_contacto['Estado'].value_counts().reindex(orden).fillna(0)
-        st.bar_chart(stats_salud)
-
-        st.divider()
-
-        # 3. TABLAS DETALLADAS (Lo que solicitaste)
-        st.write("### 📝 Listado Detallado por Categoría")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Ingresos", f"${df_visitas['valor'].sum():,.0f}")
+        c2.metric("Servicios", len(df_visitas))
+        c3.metric("Mascotas", len(ultimo))
         
-        tab_activos, tab_medios, tab_perdidos = st.tabs(["✅ Activos", "⚠️ Medios", "🚨 Perdidos"])
+        st.bar_chart(ultimo['Estado'].value_counts())
         
-        with tab_activos:
-            st.success("Clientes que han venido en los últimos 30 días")
-            activos = ultimo_contacto[ultimo_contacto['Estado'] == "Activo (Fiel)"]
-            st.dataframe(activos[['mascota', 'cliente', 'id', 'fecha', 'Canal']], use_container_width=True)
-            
-        with tab_medios:
-            st.warning("Clientes que no vienen hace más de 30 días (Riesgo de abandono)")
-            medios = ultimo_contacto[ultimo_contacto['Estado'] == "Medio (Riesgo)"]
-            st.dataframe(medios[['mascota', 'cliente', 'id', 'fecha', 'Canal']], use_container_width=True)
-            
-        with tab_perdidos:
-            st.error("Clientes que no vienen hace más de 60 días (Recuperación necesaria)")
-            perdidos = ultimo_contacto[ultimo_contacto['Estado'] == "Perdido (Inactivo)"]
-            st.dataframe(perdidos[['mascota', 'cliente', 'id', 'fecha', 'Canal']], use_container_width=True)
+        t1, t2, t3 = st.tabs(["✅ Activos", "⚠️ Medios", "🚨 Perdidos"])
+        with t1: st.dataframe(ultimo[ultimo['Estado']=="Activo"], use_container_width=True)
+        with t2: st.dataframe(ultimo[ultimo['Estado']=="Medio"], use_container_width=True)
+        with t3: st.dataframe(ultimo[ultimo['Estado']=="Perdido"], use_container_width=True)
 
-    elif menu == "🔍 Buscador e Historial":
-        st.subheader("Buscador de Historial")
-        busqueda = st.text_input("Nombre de mascota o cliente")
-        if busqueda:
-            res = df[df.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
+    elif menu == "🔍 Buscador Global":
+        st.subheader("Historial Completo")
+        busq = st.text_input("Buscar mascota o dueño")
+        if busq:
+            res = df_visitas[df_visitas.astype(str).apply(lambda x: x.str.contains(busq, case=False)).any(axis=1)]
             st.dataframe(res.sort_values('fecha', ascending=False), use_container_width=True)
-        else:
-            st.dataframe(df.sort_values('fecha', ascending=False), use_container_width=True)
-
-    elif menu == "📅 Citas de Hoy":
-        hoy_f = datetime.now().date()
-        df_hoy = df[df['fecha'].dt.date == hoy_f]
-        st.write(f"Agenda para hoy: {hoy_f.strftime('%d/%m/%Y')}")
-        if not df_hoy.empty:
-            st.dataframe(df_hoy, use_container_width=True)
-        else:
-            st.info("No hay servicios registrados para hoy.")
