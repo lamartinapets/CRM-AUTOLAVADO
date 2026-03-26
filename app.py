@@ -9,7 +9,8 @@ st.set_page_config(page_title="CRM Pro - La Martina", layout="wide", page_icon="
 # --- LOGIN SEGURO ---
 if "auth" not in st.session_state:
     st.title("🔐 Acceso Administrativo - La Martina")
-    col_l1, col_l2 = st.columns(2) # Corregido: número de columnas especificado
+    # CORRECCIÓN: Se define el número de columnas para evitar el TypeError
+    col_l1, col_l2 = st.columns(2) 
     with col_l1:
         pw = st.text_input("Ingrese la contraseña de seguridad", type="password")
     if st.button("Ingresar"):
@@ -25,18 +26,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_data(ttl=0)
 def load_data():
-    # Carga desde la URL definida en Secrets
     df = conn.read(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], worksheet="visitas")
     
-    # Asegurar que existan columnas para hora y asistencia (aunque no estén en el Excel original)
+    # Asegurar columnas necesarias
     for col in ["hora", "asistencia"]:
         if col not in df.columns:
             df[col] = "Pendiente"
             
-    # Convertir fecha al formato correcto (Columna C en tu Excel)
     df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True, errors='coerce')
     
-    # Limpiar columna valor (Columna F)
     if 'valor' in df.columns:
         df['valor'] = df['valor'].astype(str).replace(r'[\$,]', '', regex=True)
         df['valor'] = pd.to_numeric(df['valor'], errors='coerce').fillna(0)
@@ -45,15 +43,15 @@ def load_data():
 
 df = load_data()
 
-# --- INTERFAZ PRINCIPAL ---
-st.title("🐾 CRM Estratégico La Martina")
+# --- INTERFAZ ---
+st.title("🐾 CRM La Martina Pets")
 
-menu = ["📅 Agenda y Asistencia", "📊 Tablero de Análisis", "🚨 Alerta de Retención", "🔍 Buscador Total"]
-choice = st.sidebar.selectbox("Panel de Control", menu)
+menu = ["📅 Agenda & Asistencia", "📊 Análisis", "🚨 Alertas", "🔍 Buscador"]
+choice = st.sidebar.selectbox("Menú", menu)
 
-if choice == "📅 Agenda y Asistencia":
+if choice == "📅 Agenda & Asistencia":
     st.subheader("📝 Gestión de Citas")
-    t1, t2 = st.tabs(["🆕 Nueva Cita", "✅ Confirmar Asistencia"])
+    t1, t2 = st.tabs(["🆕 Nueva Cita", "✅ Confirmar"])
     
     with t1:
         with st.form("registro", clear_on_submit=True):
@@ -67,9 +65,9 @@ if choice == "📅 Agenda y Asistencia":
             fecha = f1.date_input("Fecha")
             hora = f2.time_input("Hora")
             canal = f3.selectbox("Canal", ["Local", "WhatsApp", "Instagram", "Pauta ads", "Volante"])
-            valor = st.number_input("Valor del servicio", min_value=0)
+            valor = st.number_input("Valor", min_value=0)
             
-            if st.form_submit_button("Guardar en Excel"):
+            if st.form_submit_button("Guardar"):
                 new_row = pd.DataFrame([{
                     "mascota": mascota, "raza": raza, "fecha": fecha.strftime('%d/%m/%Y'),
                     "cliente": cliente, "id": id_tel, "valor": valor, "Canal": canal,
@@ -77,50 +75,32 @@ if choice == "📅 Agenda y Asistencia":
                 }])
                 updated = pd.concat([df, new_row], ignore_index=True)
                 conn.update(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], data=updated, worksheet="visitas")
-                st.success("✅ ¡Cita guardada!")
+                st.success("✅ Guardado en Excel")
                 st.cache_data.clear()
                 st.rerun()
 
     with t2:
-        st.write("### Citas para hoy")
         hoy = datetime.now().strftime('%Y-%m-%d')
-        filtro_hoy = df[(df['fecha'].dt.strftime('%Y-%m-%d') == hoy) & (df['asistencia'] == "Pendiente")]
-        
-        if not filtro_hoy.empty:
-            for idx, row in filtro_hoy.iterrows():
-                col_a, col_b, col_c = st.columns()
-                col_a.write(f"🐶 {row['mascota']} ({row['cliente']}) - {row['hora']}")
-                if col_b.button("✅ Asistió", key=f"si_{idx}"):
+        pendientes = df[(df['fecha'].dt.strftime('%Y-%m-%d') == hoy) & (df['asistencia'] == "Pendiente")]
+        if not pendientes.empty:
+            for idx, row in pendientes.iterrows():
+                col_a, col_b = st.columns()
+                col_a.write(f"🐶 {row['mascota']} - {row['hora']}")
+                if col_b.button("Asistió", key=idx):
                     df.at[idx, 'asistencia'] = "SÍ"
                     conn.update(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], data=df, worksheet="visitas")
                     st.cache_data.clear()
                     st.rerun()
-                if col_c.button("❌ No", key=f"no_{idx}"):
-                    df.at[idx, 'asistencia'] = "NO"
-                    conn.update(spreadsheet=st.secrets["connections"]["gsheets"]["spreadsheet"], data=df, worksheet="visitas")
-                    st.cache_data.clear()
-                    st.rerun()
         else:
-            st.info("No hay citas pendientes para hoy.")
+            st.info("No hay citas para hoy.")
 
-elif choice == "📊 Tablero de Análisis":
-    st.subheader("💡 Análisis de Comportamiento")
-    df_si = df[df['asistencia'] == "SÍ"]
-    
-    m1, m2 = st.columns(2)
-    m1.metric("Ventas Totales", f"${df_si['valor'].sum():,.0f}")
-    m2.metric("Clientes Atendidos", len(df_si))
-    
-    st.write("### Efectividad por Canal")
-    st.bar_chart(df_si['Canal'].value_counts())
+elif choice == "📊 Análisis":
+    st.metric("Ventas Totales", f"${df[df['asistencia'] == 'SÍ']['valor'].sum():,.0f}")
+    st.bar_chart(df['Canal'].value_counts())
 
-elif choice == "🚨 Alerta de Retención":
-    st.subheader("Clientes que no han vuelto en 30 días")
+elif choice == "🚨 Alertas":
     limite = datetime.now() - timedelta(days=30)
-    # Buscar última visita exitosa por cliente
-    fugas = df[df['asistencia'] == "SÍ"].groupby(['cliente', 'id'])['fecha'].max().reset_index()
-    alerta = fugas[fugas['fecha'] < limite]
-    st.table(alerta)
+    st.table(df[df['fecha'] < limite][['cliente', 'id', 'fecha']])
 
 else:
-    st.dataframe(df.sort_values('fecha', ascending=False), use_container_width=True)
+    st.dataframe(df.sort_values('fecha', ascending=False))
