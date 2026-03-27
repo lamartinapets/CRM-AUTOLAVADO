@@ -28,11 +28,9 @@ def load_data():
         df_v.columns = [c.strip() for c in df_v.columns]
         df_v['fecha'] = pd.to_datetime(df_v['fecha'], dayfirst=True, errors='coerce')
         
-        # Limpieza de valores en Visitas
         if 'valor' in df_v.columns:
             df_v['valor'] = df_v['valor'].astype(str).str.replace(r'[^\d]', '', regex=True)
             df_v['valor'] = pd.to_numeric(df_v['valor'], errors='coerce').fillna(0).astype(int)
-            # Corrección de ceros extra si el valor es absurdo (> 1 millón por un baño)
             df_v['valor'] = df_v['valor'].apply(lambda x: x/100 if x > 1000000 else x)
         
         # 2. CARGAR AGENDA
@@ -40,16 +38,18 @@ def load_data():
         df_a.columns = [c.strip() for c in df_a.columns]
         df_a['fecha'] = pd.to_datetime(df_a['fecha'], dayfirst=True, errors='coerce')
         
-        # Limpieza de números en Agenda (abono y valor total)
+        # Limpieza de números
         for col in ['abono', 'valor total']:
             if col in df_a.columns:
                 df_a[col] = df_a[col].astype(str).str.replace(r'[^\d]', '', regex=True)
                 df_a[col] = pd.to_numeric(df_a[col], errors='coerce').fillna(0).astype(int)
-                # Si el número se leyó con dos ceros extra (ej: 4000000 en vez de 40000)
                 df_a[col] = df_a[col].apply(lambda x: x/100 if x > 1000000 else x)
         
+        # ORDENAR MENOR A MAYOR (Fecha y luego Hora)
         if not df_a.empty:
-            df_a = df_a.sort_values(by=['fecha'], ascending=[True])
+            # Aseguramos que la hora tenga formato HH:MM para ordenar bien
+            df_a['hora'] = df_a['hora'].fillna("00:00").astype(str)
+            df_a = df_a.sort_values(by=['fecha', 'hora'], ascending=[True, True])
             
         return df_v, df_a
     except Exception as e:
@@ -69,30 +69,33 @@ if df_visitas is not None:
         
         if df_agenda is not None and not df_agenda.empty:
             agenda_calc = df_agenda.copy()
-            agenda_calc['fecha_display'] = agenda_calc['fecha'].dt.strftime('%d/%m/%Y')
+            
+            # --- NUEVA LÓGICA: DÍA DE LA SEMANA ---
+            dias_dict = {
+                'Monday': 'Lunes', 'Tuesday': 'Martes', 'Wednesday': 'Miércoles',
+                'Thursday': 'Jueves', 'Friday': 'Viernes', 'Saturday': 'Sábado', 'Sunday': 'Domingo'
+            }
+            agenda_calc['Día'] = agenda_calc['fecha'].dt.day_name().map(dias_dict)
+            agenda_calc['Fecha'] = agenda_calc['fecha'].dt.strftime('%d/%m/%Y')
             
             # Cálculo de Saldo
             agenda_calc['Saldo Pendiente'] = agenda_calc['valor total'] - agenda_calc['abono']
             
-            # Columnas a mostrar
-            cols_ver = ['fecha_display', 'hora', 'mascota', 'cliente', 'servicio', 'valor total', 'abono', 'Saldo Pendiente']
+            # Columnas a mostrar (incluyendo el Día)
+            cols_ver = ['Día', 'Fecha', 'hora', 'mascota', 'cliente', 'servicio', 'valor total', 'abono', 'Saldo Pendiente']
             
             st.dataframe(agenda_calc[cols_ver].style.format({
-                'valor total': '${:,.0f}', 
-                'abono': '${:,.0f}', 
-                'Saldo Pendiente': '${:,.0f}'
+                'valor total': '${:,.0f}', 'abono': '${:,.0f}', 'Saldo Pendiente': '${:,.0f}'
             }).applymap(lambda x: 'background-color: #ffcccc' if isinstance(x, (int, float)) and x > 0 else '', subset=['Saldo Pendiente']), 
             use_container_width=True)
             
-            # Resumen de cobros hoy (Comparando con la fecha actual del sistema)
+            # Resumen de cobros hoy
             hoy_actual = datetime.now().date()
-            # Filtramos solo lo que sea hoy
-            df_hoy = agenda_calc[agenda_calc['fecha'].dt.date == hoy_actual]
-            saldo_hoy = df_hoy['Saldo Pendiente'].sum()
+            saldo_hoy = agenda_calc[agenda_calc['fecha'].dt.date == hoy_actual]['Saldo Pendiente'].sum()
+            st.metric(f"Cobros pendientes para hoy", f"${saldo_hoy:,.0f}")
             
-            st.metric(f"Total por cobrar hoy ({hoy_actual.strftime('%d/%m/%Y')})", f"${saldo_hoy:,.0f}")
         else:
-            st.info("No hay citas pendientes.")
+            st.info("No hay citas registradas.")
 
     elif menu == "📈 Dashboard Salud":
         st.subheader("Estado de Clientes")
@@ -111,7 +114,8 @@ if df_visitas is not None:
         c1, c2, c3 = st.columns(3)
         c1.metric("Ingresos Históricos", f"${df_visitas['valor'].sum():,.0f}")
         c2.metric("Servicios Realizados", len(df_visitas))
-        c3.metric("Mascotas Únicas", len(ultimo))
+        k_mascotas = len(ultimo)
+        c3.metric("Mascotas Únicas", k_mascotas)
         
         st.bar_chart(ultimo['Estado'].value_counts())
         
